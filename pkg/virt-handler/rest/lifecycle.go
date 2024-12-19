@@ -19,8 +19,11 @@
 package rest
 
 import (
+	"encoding/base64"
 	"fmt"
 	"io"
+	"kubevirt.io/kubevirt/pkg/virt-launcher/virtwrap/cli"
+	"kubevirt.io/kubevirt/pkg/virt-launcher/virtwrap/util"
 	"net/http"
 
 	"github.com/emicklei/go-restful/v3"
@@ -47,6 +50,12 @@ type LifecycleHandler struct {
 	recorder     record.EventRecorder
 	vmiStore     cache.Store
 	virtShareDir string
+	virConn      cli.Connection
+}
+
+type PasswordOptions struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
 }
 
 func NewLifecycleHandler(recorder record.EventRecorder, vmiStore cache.Store, virtShareDir string) *LifecycleHandler {
@@ -161,6 +170,51 @@ func (lh *LifecycleHandler) SoftRebootHandler(request *restful.Request, response
 	}
 
 	lh.recorder.Eventf(vmi, k8sv1.EventTypeNormal, "SoftRebooted", "VirtualMachineInstance soft rebooted")
+	response.WriteHeader(http.StatusAccepted)
+}
+
+func (lh *LifecycleHandler) ResetPasswordHandler(request *restful.Request, response *restful.Response) {
+	vmi, client, err := lh.getVMILauncherClient(request, response)
+	if err != nil {
+		return
+	}
+
+	if request.Request.Body == nil {
+		log.Log.Object(vmi).Reason(err).Error("Request with no body:  reset password parameters are required")
+		response.WriteError(http.StatusBadRequest, fmt.Errorf("failed to get parameters from request when reset password"))
+		return
+	}
+
+	opts := PasswordOptions{}
+
+	err = yaml.NewYAMLOrJSONDecoder(request.Request.Body, 1024).Decode(opts)
+	switch err {
+	case io.EOF, nil:
+		break
+	default:
+		log.Log.Object(vmi).Reason(err).Error("Failed to decode parameters")
+		response.WriteError(http.StatusBadRequest, err)
+		return
+	}
+
+	username := opts.Username
+	password := opts.Password
+
+	base64Str := base64.StdEncoding.EncodeToString([]byte(password))
+	domName := util.VMINamespaceKeyFunc(vmi)
+	cmdSetPassword := fmt.Sprintf(`{"execute":"guest-set-user-password", 
+                                  "arguments": {"username":"%s", "password": "%s", "crypted": false}}`,
+		username, base64Str)
+
+	_, err = lh.virConn.QemuAgentCommand(cmdSetPassword, domName)
+	if err != nil {
+		// if setting password failed, reset reload to true so this will be tried again
+		log.Log.Object(vmi).Reason(err).Error("Failed to reset password")
+		response.WriteError(http.StatusInternalServerError, err)
+		return
+	}
+
+	lh.recorder.Eventf(vmi, k8sv1.EventTypeNormal, "ResetPassword", "VirtualMachineInstance Reset Password")
 	response.WriteHeader(http.StatusAccepted)
 }
 

@@ -323,6 +323,14 @@ func (app *virtAPIApp) composeSubresources() {
 			Returns(http.StatusOK, "OK", "").
 			Returns(http.StatusInternalServerError, httpStatusInternalServerError, ""))
 
+		subws.Route(subws.PUT(definitions.NamespacedResourcePath(subresourcesvmiGVR)+definitions.SubResourcePath("resetpassword")).
+			To(subresourceApp.ResetPasswordVMIRequestHandler).
+			Param(definitions.NamespaceParam(subws)).Param(definitions.NameParam(subws)).
+			Operation(version.Version+"ResetPassword").
+			Doc("Soft reboot a VirtualMachineInstance object.").
+			Returns(http.StatusOK, "OK", "").
+			Returns(http.StatusInternalServerError, httpStatusInternalServerError, ""))
+
 		subws.Route(subws.PUT(definitions.NamespacedResourcePath(subresourcesvmiGVR)+definitions.SubResourcePath("pause")).
 			To(subresourceApp.PauseVMIRequestHandler).
 			Consumes(mime.MIME_ANY).
